@@ -2,18 +2,42 @@ import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Database } from '../types/database';
 
-// You'll need to replace these with your actual Supabase credentials
-const supabaseUrl = process.env.SUPABASE_URL || 'YOUR_SUPABASE_URL';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+// Import environment variables
+let SUPABASE_URL = '';
+let SUPABASE_ANON_KEY = '';
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-  },
-});
+try {
+  const env = require('@env');
+  SUPABASE_URL = env.SUPABASE_URL;
+  SUPABASE_ANON_KEY = env.SUPABASE_ANON_KEY;
+} catch (error) {
+  console.warn('Failed to load @env:', error);
+}
+
+// Fallback to hardcoded values if env variables are not available
+const supabaseUrl = SUPABASE_URL || 'https://akdkjignhmduhkuoesxt.supabase.co';
+const supabaseAnonKey = SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFrZGtqaWduaG1kdWhrdW9lc3h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2ODM0NTQsImV4cCI6MjA4MzI1OTQ1NH0.FsI4SN1IGrFKlqCLP6yzQ9N4TN7eAWzJtbJo3DjSpiA';
+
+console.log('Initializing Supabase with URL:', supabaseUrl);
+
+let supabase: any;
+
+try {
+  supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      storage: AsyncStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  });
+  console.log('Supabase client created successfully');
+} catch (error) {
+  console.error('Failed to create Supabase client:', error);
+  throw error;
+}
+
+export { supabase };
 
 // Helper functions for common operations
 export const uploadImage = async (

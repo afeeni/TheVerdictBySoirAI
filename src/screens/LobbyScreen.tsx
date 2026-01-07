@@ -25,7 +25,7 @@ type LobbyNavigationProp = NativeStackNavigationProp<
 
 const LobbyScreen = () => {
   const navigation = useNavigation<LobbyNavigationProp>();
-  const { user } = useAuthStore();
+  const { user, incrementHostedGames } = useAuthStore();
   const {
     currentRoom,
     players,
@@ -62,8 +62,8 @@ const LobbyScreen = () => {
   const handleStartGame = async () => {
     if (!currentRoom || !user) return;
 
-    if (players.length < 4) {
-      Alert.alert('Not Enough Players', 'You need at least 4 players to start the game');
+    if (players.length < 3) {
+      Alert.alert('Not Enough Players', 'You need at least 3 players to start the game');
       return;
     }
 
@@ -80,6 +80,10 @@ const LobbyScreen = () => {
       setIsLoading(true);
       try {
         await startGame();
+        // Only increment if this user is the host
+        if (user?.id === currentRoom?.hostId) {
+          await incrementHostedGames();
+        }
         navigation.replace('Game');
       } catch (error: any) {
         Alert.alert('Error', error.message);
@@ -196,9 +200,9 @@ const LobbyScreen = () => {
             ))}
           </View>
 
-          {players.length < 4 && (
+          {players.length < 3 && (
             <Text style={styles.warningText}>
-              Need at least {4 - players.length} more player(s) to start
+              Need at least {3 - players.length} more player(s) to start
             </Text>
           )}
         </View>
@@ -225,10 +229,10 @@ const LobbyScreen = () => {
             <TouchableOpacity
               style={[
                 styles.startButton,
-                (isLoading || players.length < 4) && styles.buttonDisabled,
+                (isLoading || players.length < 3) && styles.buttonDisabled,
               ]}
               onPress={handleStartGame}
-              disabled={isLoading || players.length < 4}
+              disabled={isLoading || players.length < 3}
             >
               {isLoading ? (
                 <ActivityIndicator color="#FFFFFF" />

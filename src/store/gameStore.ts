@@ -135,6 +135,16 @@ export const useGameStore = create<GameState>((set, get) => ({
         isLoading: false,
       });
 
+      // Load initial players list
+      const { data: initialPlayers } = await supabase
+        .from('players')
+        .select('*, user:users(*)')
+        .eq('game_room_id', room.id);
+
+      if (initialPlayers) {
+        set({ players: initialPlayers as any });
+      }
+
       // Subscribe to realtime updates
       get().subscribeToRoom(room.id);
 
@@ -215,6 +225,16 @@ export const useGameStore = create<GameState>((set, get) => ({
         },
         isLoading: false,
       });
+
+      // Load initial players list
+      const { data: initialPlayers } = await supabase
+        .from('players')
+        .select('*, user:users(*)')
+        .eq('game_room_id', room.id);
+
+      if (initialPlayers) {
+        set({ players: initialPlayers as any });
+      }
 
       // Subscribe to realtime updates
       get().subscribeToRoom(room.id);

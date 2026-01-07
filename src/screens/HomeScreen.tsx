@@ -103,11 +103,15 @@ const HomeScreen = () => {
         <View style={styles.stats}>
           <View style={styles.statItem}>
             <Text style={styles.statValue}>
-              {user?.gamesHostedThisMonth || 0}/2
+              {user?.subscriptionTier === 'premium'
+                ? user?.totalGamesHosted || 0
+                : `${user?.gamesHostedThisMonth || 0}/2`}
             </Text>
-            <Text style={styles.statLabel}>Games Hosted</Text>
+            <Text style={styles.statLabel}>
+              {user?.subscriptionTier === 'premium' ? 'Total Games Hosted' : 'Games Hosted'}
+            </Text>
             {user?.subscriptionTier === 'free' && (
-              <Text style={styles.statNote}>(Free Tier)</Text>
+              <Text style={styles.statNote}>(This Month)</Text>
             )}
           </View>
         </View>

@@ -15,6 +15,7 @@ export interface Database {
           hot_take: string | null;
           subscription_tier: 'free' | 'premium';
           games_hosted_this_month: number;
+          total_games_hosted: number;
           created_at: string;
           updated_at: string;
         };
@@ -31,6 +32,7 @@ export interface Database {
           hot_take?: string | null;
           subscription_tier?: 'free' | 'premium';
           games_hosted_this_month?: number;
+          total_games_hosted?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -47,6 +49,7 @@ export interface Database {
           hot_take?: string | null;
           subscription_tier?: 'free' | 'premium';
           games_hosted_this_month?: number;
+          total_games_hosted?: number;
           created_at?: string;
           updated_at?: string;
         };

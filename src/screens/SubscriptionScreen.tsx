@@ -27,7 +27,7 @@ interface SubscriptionPlan {
 }
 
 const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
-  const { user, profile, updateProfile } = useAuthStore();
+  const { user, updateProfile } = useAuthStore();
   const [currentPlan, setCurrentPlan] = useState<'free' | 'premium'>('free');
   const [isLoading, setIsLoading] = useState(false);
   const [gamesHosted, setGamesHosted] = useState(0);
@@ -49,7 +49,7 @@ const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
     {
       id: 'premium',
       name: 'PREMIUM',
-      price: '$4.99',
+      price: '$2.99',
       period: '/month',
       features: [
         'Join unlimited games',
@@ -100,7 +100,7 @@ const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
       // In a real app, this would integrate with RevenueCat or Stripe
       Alert.alert(
         'Subscribe to Premium',
-        'Premium subscription gives you unlimited hosting and access to all question packs.\n\nPrice: $4.99/month',
+        'Premium subscription gives you unlimited hosting and access to all question packs.\n\nPrice: $2.99/month',
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -146,7 +146,7 @@ const SubscriptionScreen: React.FC<Props> = ({ navigation }) => {
       if (error) throw error;
 
       // Update local state
-      await updateProfile({ subscription_tier: tier });
+      await updateProfile({ subscriptionTier: tier });
       setCurrentPlan(tier);
 
       Alert.alert(

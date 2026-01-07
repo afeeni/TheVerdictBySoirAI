@@ -31,11 +31,119 @@ target 'TheVerdictBySoirAI' do
       # :ccache_enabled => true
     )
 
+    pods_support_files_root = File.join(installer.sandbox.root.to_s, 'Target Support Files')
+
     # Fix deployment target for all pods
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
         config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.4'
       end
+    end
+
+    hermes_prebuilt_search_path = ' "${PODS_XCFRAMEWORKS_BUILD_DIR}/hermes-engine/Pre-built"'
+    hermes_xcframework_base = "${PODS_ROOT}/hermes-engine/destroot/Library/Frameworks/universal/hermesvm.xcframework"
+    hermes_xcframework_slices = {
+      'ios-arm64' => 'iphoneos',
+      'ios-arm64_x86_64-simulator' => 'iphonesimulator',
+      'ios-arm64_x86_64-maccatalyst' => 'macosx',
+      'tvos-arm64' => 'appletvos',
+      'tvos-arm64_x86_64-simulator' => 'appletvsimulator',
+      'xros-arm64' => 'xros',
+      'xros-arm64_x86_64-simulator' => 'xrsimulator'
+    }
+    hermes_input_entries = hermes_xcframework_slices.map do |slice, _sdk|
+      framework_dir = "#{hermes_xcframework_base}/#{slice}/hermesvm.framework"
+      [framework_dir, "#{framework_dir}/hermesvm", "#{framework_dir}/Info.plist"]
+    end.flatten
+    hermes_output_entries = [
+      '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermesvm.framework',
+      '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermesvm.framework/hermesvm',
+      '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/hermesvm.framework/Info.plist'
+    ]
+    Dir.glob(File.join(pods_support_files_root, '**/*.xcconfig')).each do |xcconfig_path|
+      next unless File.file?(xcconfig_path)
+      contents = File.read(xcconfig_path)
+      new_contents = contents.gsub(hermes_prebuilt_search_path, '')
+      new_contents.gsub!(/ "\${PODS_ROOT}\/hermes-engine\/destroot\/Library\/Frameworks\/universal\/hermesvm\.xcframework\/[^"]+"/, '')
+      hermes_xcframework_slices.each do |slice, sdk|
+        line = "FRAMEWORK_SEARCH_PATHS[sdk=#{sdk}*] = $(inherited) \"#{hermes_xcframework_base}/#{slice}\""
+        new_contents = "#{new_contents}\n#{line}" unless new_contents.include?(line)
+      end
+      File.write(xcconfig_path, new_contents) if new_contents != contents
+    end
+
+    Dir.glob(File.join(pods_support_files_root, 'Pods-TheVerdictBySoirAI', 'Pods-TheVerdictBySoirAI-frameworks-*-input-files.xcfilelist')).each do |xcfilelist_path|
+      next unless File.file?(xcfilelist_path)
+      lines = File.readlines(xcfilelist_path, chomp: true)
+      next if lines.empty?
+      changed = false
+      if lines.any? { |line| line.include?('hermes-engine/Pre-built') }
+        lines.reject! { |line| line.include?('hermes-engine/Pre-built') }
+        changed = true
+      end
+      hermes_input_entries.each do |entry|
+        next if lines.include?(entry)
+        lines << entry
+        changed = true
+      end
+      File.write(xcfilelist_path, lines.join("\n") + "\n") if changed
+    end
+
+    Dir.glob(File.join(pods_support_files_root, 'Pods-TheVerdictBySoirAI', 'Pods-TheVerdictBySoirAI-frameworks-*-output-files.xcfilelist')).each do |xcfilelist_path|
+      next unless File.file?(xcfilelist_path)
+      lines = File.readlines(xcfilelist_path, chomp: true)
+      changed = false
+      hermes_output_entries.each do |entry|
+        next if lines.include?(entry)
+        lines << entry
+        changed = true
+      end
+      File.write(xcfilelist_path, lines.join("\n") + "\n") if changed
+    end
+
+    frameworks_script = File.join(pods_support_files_root, 'Pods-TheVerdictBySoirAI', 'Pods-TheVerdictBySoirAI-frameworks.sh')
+    if File.exist?(frameworks_script)
+      contents = File.read(frameworks_script)
+      hermes_helper = <<~'HERMES'.strip
+        HERMES_XCFRAMEWORK_ROOT="${PODS_ROOT}/hermes-engine/destroot/Library/Frameworks/universal/hermesvm.xcframework"
+        hermes_framework_path()
+        {
+          case "${PLATFORM_NAME}" in
+            iphonesimulator)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/ios-arm64_x86_64-simulator/hermesvm.framework"
+              ;;
+            iphoneos)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/ios-arm64/hermesvm.framework"
+              ;;
+            macosx)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/ios-arm64_x86_64-maccatalyst/hermesvm.framework"
+              ;;
+            appletvsimulator)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/tvos-arm64_x86_64-simulator/hermesvm.framework"
+              ;;
+            appletvos)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/tvos-arm64/hermesvm.framework"
+              ;;
+            xrsimulator|xrossimulator)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/xros-arm64_x86_64-simulator/hermesvm.framework"
+              ;;
+            xros)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/xros-arm64/hermesvm.framework"
+              ;;
+            *)
+              echo "${HERMES_XCFRAMEWORK_ROOT}/ios-arm64/hermesvm.framework"
+              ;;
+          esac
+        }
+      HERMES
+
+      unless contents.include?('hermes_framework_path()')
+        marker = 'BCSYMBOLMAP_DIR="BCSymbolMaps"'
+        contents.sub!(marker, "#{marker}\n\n#{hermes_helper}\n")
+      end
+
+      contents.gsub!(/install_framework ".*hermesvm\.framework"/, 'install_framework "$(hermes_framework_path)"')
+      File.write(frameworks_script, contents)
     end
   end
 end

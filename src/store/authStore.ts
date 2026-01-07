@@ -8,6 +8,8 @@ interface AuthState {
   session: any | null;
   isLoading: boolean;
   error: string | null;
+  setUser: (user: User | null) => void;
+  setSession: (session: any | null) => void;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -22,6 +24,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
   isLoading: true,
   error: null,
+
+  setUser: (user: User | null) => set({ user }),
+  setSession: (session: any | null) => set({ session }),
 
   signUp: async (email: string, password: string, name: string) => {
     set({ isLoading: true, error: null });
@@ -42,6 +47,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             name,
             subscription_tier: 'free',
             games_hosted_this_month: 0,
+            total_games_hosted: 0,
           });
 
         if (profileError) throw profileError;
@@ -51,6 +57,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           name,
           subscriptionTier: 'free',
           gamesHostedThisMonth: 0,
+          totalGamesHosted: 0,
         };
 
         set({
@@ -98,6 +105,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           hotTake: profile.hot_take,
           subscriptionTier: profile.subscription_tier,
           gamesHostedThisMonth: profile.games_hosted_this_month,
+          totalGamesHosted: profile.total_games_hosted || 0,
         };
 
         set({
@@ -188,6 +196,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             hotTake: profile.hot_take,
             subscriptionTier: profile.subscription_tier,
             gamesHostedThisMonth: profile.games_hosted_this_month,
+            totalGamesHosted: profile.total_games_hosted || 0,
           };
 
           set({
@@ -218,17 +227,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const { user } = get();
     if (!user) throw new Error('No user logged in');
 
-    const newCount = user.gamesHostedThisMonth + 1;
+    const newMonthlyCount = user.gamesHostedThisMonth + 1;
+    const newTotalCount = user.totalGamesHosted + 1;
 
     const { error } = await supabase
       .from('users')
-      .update({ games_hosted_this_month: newCount })
+      .update({
+        games_hosted_this_month: newMonthlyCount,
+        total_games_hosted: newTotalCount,
+      })
       .eq('id', user.id);
 
     if (error) throw error;
 
     set({
-      user: { ...user, gamesHostedThisMonth: newCount },
+      user: {
+        ...user,
+        gamesHostedThisMonth: newMonthlyCount,
+        totalGamesHosted: newTotalCount,
+      },
     });
   },
 }));

@@ -25,7 +25,7 @@ type CreateGameNavigationProp = NativeStackNavigationProp<
 
 const CreateGameScreen = () => {
   const navigation = useNavigation<CreateGameNavigationProp>();
-  const { user, incrementHostedGames } = useAuthStore();
+  const { user } = useAuthStore();
   const { createRoom } = useGameStore();
 
   const [gameMode, setGameMode] = useState<'standard' | 'drinking'>('standard');
@@ -82,8 +82,6 @@ const CreateGameScreen = () => {
         selectedPackId,
         gameLength
       );
-
-      await incrementHostedGames();
 
       navigation.navigate('Lobby');
     } catch (error: any) {

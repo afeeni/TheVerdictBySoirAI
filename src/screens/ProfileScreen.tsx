@@ -23,20 +23,22 @@ import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 
 const ProfileScreen: React.FC<Props> = ({ navigation }) => {
-  const { user, profile, updateProfile, signOut } = useAuthStore();
+  const { user, updateProfile, signOut } = useAuthStore();
   const [isEditing, setIsEditing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: profile?.name || '',
-    age: profile?.age?.toString() || '',
-    known_for: profile?.known_for || '',
-    red_flag: profile?.red_flag || '',
-    guilty_pleasure: profile?.guilty_pleasure || '',
-    secret_talent: profile?.secret_talent || '',
-    hot_take: profile?.hot_take || '',
+    name: user?.name || '',
+    age: user?.age?.toString() || '',
+    known_for: user?.knownFor || '',
+    red_flag: user?.redFlag || '',
+    guilty_pleasure: user?.guiltyPleasure || '',
+    secret_talent: user?.secretTalent || '',
+    hot_take: user?.hotTake || '',
   });
-  const [frontPhoto, setFrontPhoto] = useState<string | null>(profile?.front_photo_url || null);
-  const [sidePhoto, setSidePhoto] = useState<string | null>(profile?.side_photo_url || null);
+  const [frontPhoto, setFrontPhoto] = useState<string | null>(user?.frontPhotoUrl || null);
+  const [sidePhoto, setSidePhoto] = useState<string | null>(user?.sidePhotoUrl || null);
+  const [frontPhotoType, setFrontPhotoType] = useState<string>('image/jpeg');
+  const [sidePhotoType, setSidePhotoType] = useState<string>('image/jpeg');
 
   const personalFactsFields = [
     { key: 'known_for', label: 'Known for...', placeholder: 'Being the party starter' },
@@ -63,10 +65,15 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
       const asset = result.assets[0];
 
       if (asset.uri) {
+        const fileType = asset.type || 'image/jpeg';
+        console.log('Selected photo type:', fileType, 'URI:', asset.uri);
+
         if (type === 'front') {
           setFrontPhoto(asset.uri);
+          setFrontPhotoType(fileType);
         } else {
           setSidePhoto(asset.uri);
+          setSidePhotoType(fileType);
         }
       }
     }
@@ -85,42 +92,92 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const uploadPhotos = async () => {
-    if (!user) return;
+    if (!user) return {};
 
-    const uploadPromises = [];
-
-    if (frontPhoto && frontPhoto.startsWith('file://')) {
-      const fileName = `${user.id}/front-${Date.now()}.jpg`;
-      const blob = await fetch(frontPhoto).then(r => r.blob());
-      uploadPromises.push(
-        uploadImage('user-photos', fileName, blob).then(url => ({
-          type: 'front',
-          url,
-        }))
-      );
-    }
-
-    if (sidePhoto && sidePhoto.startsWith('file://')) {
-      const fileName = `${user.id}/side-${Date.now()}.jpg`;
-      const blob = await fetch(sidePhoto).then(r => r.blob());
-      uploadPromises.push(
-        uploadImage('user-photos', fileName, blob).then(url => ({
-          type: 'side',
-          url,
-        }))
-      );
-    }
-
-    const results = await Promise.all(uploadPromises);
     const photoUrls: { front_photo_url?: string; side_photo_url?: string } = {};
 
-    results.forEach(result => {
-      if (result.type === 'front') {
-        photoUrls.front_photo_url = result.url;
-      } else {
-        photoUrls.side_photo_url = result.url;
+    try {
+      // Upload front photo if it's new
+      if (frontPhoto && frontPhoto.startsWith('file://')) {
+        console.log('Uploading front photo...', frontPhoto, 'Type:', frontPhotoType);
+        const ext = frontPhotoType === 'image/heic' ? 'heic' : 'jpg';
+        const fileName = `${user.id}/front-${Date.now()}.${ext}`;
+
+        try {
+          // Read file as ArrayBuffer for React Native
+          const response = await fetch(frontPhoto);
+          const arrayBuffer = await response.arrayBuffer();
+
+          console.log('ArrayBuffer size:', arrayBuffer.byteLength);
+
+          if (arrayBuffer.byteLength === 0) {
+            throw new Error('File is empty');
+          }
+
+          const { data, error } = await supabase.storage
+            .from('user-photos')
+            .upload(fileName, arrayBuffer, {
+              cacheControl: '3600',
+              upsert: true,
+              contentType: frontPhotoType,
+            });
+
+          if (error) throw error;
+
+          const { data: urlData } = supabase.storage
+            .from('user-photos')
+            .getPublicUrl(fileName);
+
+          photoUrls.front_photo_url = urlData.publicUrl;
+          console.log('Front photo uploaded:', urlData.publicUrl);
+        } catch (error: any) {
+          console.error('Front photo upload error:', error);
+          Alert.alert('Photo Upload Error', `Failed to upload front photo: ${error.message}`);
+        }
       }
-    });
+
+      // Upload side photo if it's new
+      if (sidePhoto && sidePhoto.startsWith('file://')) {
+        console.log('Uploading side photo...', sidePhoto, 'Type:', sidePhotoType);
+        const ext = sidePhotoType === 'image/heic' ? 'heic' : 'jpg';
+        const fileName = `${user.id}/side-${Date.now()}.${ext}`;
+
+        try {
+          // Read file as ArrayBuffer for React Native
+          const response = await fetch(sidePhoto);
+          const arrayBuffer = await response.arrayBuffer();
+
+          console.log('ArrayBuffer size:', arrayBuffer.byteLength);
+
+          if (arrayBuffer.byteLength === 0) {
+            throw new Error('File is empty');
+          }
+
+          const { data, error } = await supabase.storage
+            .from('user-photos')
+            .upload(fileName, arrayBuffer, {
+              cacheControl: '3600',
+              upsert: true,
+              contentType: sidePhotoType,
+            });
+
+          if (error) throw error;
+
+          const { data: urlData } = supabase.storage
+            .from('user-photos')
+            .getPublicUrl(fileName);
+
+          photoUrls.side_photo_url = urlData.publicUrl;
+          console.log('Side photo uploaded:', urlData.publicUrl);
+        } catch (error: any) {
+          console.error('Side photo upload error:', error);
+          Alert.alert('Photo Upload Error', `Failed to upload side photo: ${error.message}`);
+        }
+      }
+    } catch (error: any) {
+      console.error('Photo upload error:', error);
+      Alert.alert('Error', `Failed to process photos: ${error.message}`);
+    }
 
     return photoUrls;
   };
@@ -138,8 +195,8 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
       // Upload photos if they are new
       const photoUrls = await uploadPhotos();
 
-      // Prepare update data
-      const updateData: any = {
+      // Prepare update data for database
+      const dbUpdateData: any = {
         name: formData.name.trim(),
         age: formData.age ? parseInt(formData.age) : null,
         known_for: formData.known_for.trim() || null,
@@ -150,23 +207,36 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
         updated_at: new Date().toISOString(),
       };
 
+      // Prepare update data for local state (camelCase)
+      const stateUpdateData: any = {
+        name: formData.name.trim(),
+        age: formData.age ? parseInt(formData.age) : null,
+        knownFor: formData.known_for.trim() || null,
+        redFlag: formData.red_flag.trim() || null,
+        guiltyPleasure: formData.guilty_pleasure.trim() || null,
+        secretTalent: formData.secret_talent.trim() || null,
+        hotTake: formData.hot_take.trim() || null,
+      };
+
       if (photoUrls?.front_photo_url) {
-        updateData.front_photo_url = photoUrls.front_photo_url;
+        dbUpdateData.front_photo_url = photoUrls.front_photo_url;
+        stateUpdateData.frontPhotoUrl = photoUrls.front_photo_url;
       }
       if (photoUrls?.side_photo_url) {
-        updateData.side_photo_url = photoUrls.side_photo_url;
+        dbUpdateData.side_photo_url = photoUrls.side_photo_url;
+        stateUpdateData.sidePhotoUrl = photoUrls.side_photo_url;
       }
 
       // Update profile in database
       const { error } = await supabase
         .from('users')
-        .update(updateData)
+        .update(dbUpdateData)
         .eq('id', user.id);
 
       if (error) throw error;
 
       // Update local state
-      await updateProfile(updateData);
+      await updateProfile(stateUpdateData);
       setIsEditing(false);
       Alert.alert('Success', 'Profile updated successfully');
     } catch (error: any) {
@@ -220,7 +290,7 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
             >
               <Text style={styles.backButtonText}>←</Text>
             </TouchableOpacity>
-            <Text style={styles.title}>MY PROFILE</Text>
+            <Text style={styles.title}>SUSPECT FILE</Text>
             <TouchableOpacity
               style={styles.editButton}
               onPress={() => setIsEditing(!isEditing)}
@@ -303,9 +373,9 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
             </View>
           </View>
 
-          {/* Personal Facts */}
+          {/* Criminal History */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>PERSONAL FACTS</Text>
+            <Text style={styles.sectionTitle}>CRIMINAL HISTORY</Text>
 
             {personalFactsFields.map((field) => (
               <View key={field.key} style={styles.field}>
@@ -360,9 +430,6 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                 </LinearGradient>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-                <Text style={styles.signOutButtonText}>SIGN OUT</Text>
-              </TouchableOpacity>
             </>
           )}
 
@@ -489,7 +556,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   saveButtonGradient: {
-    paddingVertical: 18,
+    paddingVertical: 20,
     alignItems: 'center',
   },
   saveButtonText: {
@@ -501,11 +568,17 @@ const styles = StyleSheet.create({
   subscriptionButton: {
     marginHorizontal: 20,
     marginTop: 30,
+    marginBottom: 15,
     borderRadius: 25,
     overflow: 'hidden',
+    elevation: 5,
+    shadowColor: '#e94560',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
   buttonGradient: {
-    paddingVertical: 18,
+    paddingVertical: 22,
     alignItems: 'center',
   },
   buttonText: {
@@ -516,17 +589,19 @@ const styles = StyleSheet.create({
   },
   signOutButton: {
     marginHorizontal: 20,
-    marginTop: 15,
-    paddingVertical: 18,
+    marginTop: 10,
+    marginBottom: 20,
+    paddingVertical: 20,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#666',
     borderRadius: 25,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   signOutButtonText: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#999',
+    color: '#fff',
     letterSpacing: 1,
   },
 });

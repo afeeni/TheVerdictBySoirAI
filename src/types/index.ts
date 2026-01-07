@@ -11,6 +11,7 @@ export interface User {
   hotTake?: string | null;
   subscriptionTier: 'free' | 'premium';
   gamesHostedThisMonth: number;
+  totalGamesHosted: number;
 }
 
 export interface GameRoom {

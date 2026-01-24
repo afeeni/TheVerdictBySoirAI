@@ -49,11 +49,37 @@ const LobbyScreen = () => {
   }, []);
 
   useEffect(() => {
+    const hostId = currentRoom?.hostId || (currentRoom as any)?.host_id;
+    const isHost = user?.id === hostId;
+
     // Check if game has started
-    if (currentRoom?.status === 'voting') {
-      navigation.replace('Game');
+    if (currentRoom?.status === 'voting' && currentRoom?.id) {
+      // Guests should see the lineup first too
+      if (!isHost && !showLineup) {
+        setShowLineup(true);
+        // After showing lineup, navigate to game
+        setTimeout(() => {
+          navigation.replace('Game', { roomId: currentRoom.id, phase: 'voting' });
+        }, 5000);
+      } else if (isHost) {
+        // Host already saw lineup, go directly
+        navigation.replace('Game', { roomId: currentRoom.id, phase: 'voting' });
+      }
+    }
+    // Check if game has ended or room was closed
+    if (currentRoom?.status === 'finished') {
+      Alert.alert('Game Ended', 'The host has ended the game.');
+      leaveRoom();
+      navigation.replace('Home');
     }
   }, [currentRoom?.status]);
+
+  // If room becomes null (host deleted it), go back to home
+  useEffect(() => {
+    if (!currentRoom && !isLoading) {
+      navigation.replace('Home');
+    }
+  }, [currentRoom]);
 
   const loadPlayers = async () => {
     // Players are loaded via subscription in gameStore
@@ -79,13 +105,17 @@ const LobbyScreen = () => {
     setTimeout(async () => {
       setIsLoading(true);
       try {
+        console.log('Starting game with room:', currentRoom.id);
         await startGame();
+        console.log('Game started successfully');
         // Only increment if this user is the host
-        if (user?.id === currentRoom?.hostId) {
+        const hostId = currentRoom?.hostId || (currentRoom as any)?.host_id;
+        if (user?.id === hostId) {
           await incrementHostedGames();
         }
-        navigation.replace('Game');
+        navigation.replace('Game', { roomId: currentRoom.id, phase: 'voting' });
       } catch (error: any) {
+        console.error('Start game error:', error);
         Alert.alert('Error', error.message);
         setShowLineup(false);
       } finally {
@@ -130,31 +160,47 @@ const LobbyScreen = () => {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.lineupContainer}>
-          <Text style={styles.lineupTitle}>MEET THE LINEUP</Text>
+          <Text style={styles.lineupTitle}>MEET THE SUSPECTS</Text>
           <ScrollView contentContainerStyle={styles.lineupGrid}>
             {players.map((player) => (
               <View key={player.id} style={styles.lineupItem}>
-                {player.user?.frontPhotoUrl ? (
-                  <Image
-                    source={{ uri: player.user.frontPhotoUrl }}
-                    style={styles.mugshot}
-                  />
-                ) : (
-                  <View style={styles.mugshotPlaceholder}>
-                    <Text style={styles.mugshotInitial}>
-                      {player.user?.name?.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
+                <View style={styles.mugshotRow}>
+                  {/* Front mugshot */}
+                  {player.user?.front_photo_url ? (
+                    <Image
+                      source={{ uri: player.user.front_photo_url }}
+                      style={styles.mugshot}
+                    />
+                  ) : (
+                    <View style={styles.mugshotPlaceholder}>
+                      <Text style={styles.mugshotInitial}>
+                        {player.user?.name?.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  {/* Side mugshot */}
+                  {player.user?.side_photo_url ? (
+                    <Image
+                      source={{ uri: player.user.side_photo_url }}
+                      style={styles.mugshot}
+                    />
+                  ) : (
+                    <View style={styles.mugshotPlaceholder}>
+                      <Text style={styles.mugshotInitial}>
+                        {player.user?.name?.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                </View>
                 <Text style={styles.playerName}>{player.user?.name}</Text>
                 {player.user?.age && (
                   <Text style={styles.playerAge}>
                     Facing {100 - player.user.age} years
                   </Text>
                 )}
-                {player.user?.knownFor && (
+                {player.user?.known_for && (
                   <Text style={styles.playerFact}>
-                    Known for: {player.user.knownFor}
+                    Known for: {player.user.known_for}
                   </Text>
                 )}
               </View>
@@ -190,10 +236,10 @@ const LobbyScreen = () => {
                 <View style={styles.playerInfo}>
                   <Text style={styles.playerName}>
                     {player.user?.name}
-                    {player.userId === currentRoom?.hostId && ' 👑'}
+                    {player.user_id === currentRoom?.hostId && ' 👑'}
                   </Text>
                 </View>
-                {player.userId === user?.id && (
+                {player.user_id === user?.id && (
                   <Text style={styles.youLabel}>You</Text>
                 )}
               </View>
@@ -438,24 +484,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   lineupItem: {
-    width: '45%',
+    width: '95%',
     margin: '2.5%',
     alignItems: 'center',
+    marginBottom: 16,
+  },
+  mugshotRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
   },
   mugshot: {
-    width: 100,
-    height: 133,
+    width: 80,
+    height: 107,
     borderRadius: 8,
-    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: '#FF6B6B',
   },
   mugshotPlaceholder: {
-    width: 100,
-    height: 133,
+    width: 80,
+    height: 107,
     borderRadius: 8,
     backgroundColor: '#2A2A2A',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: '#FF6B6B',
   },
   mugshotInitial: {
     fontSize: 36,

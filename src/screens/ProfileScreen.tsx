@@ -271,17 +271,21 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <LinearGradient
         colors={['#1a1a2e', '#0f0f1e']}
         style={StyleSheet.absoluteFillObject}
       />
 
       <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+          style={{ flex: 1 }}
+        >
           {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity
@@ -422,18 +426,17 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
                 style={styles.subscriptionButton}
                 onPress={() => navigation.navigate('Subscription')}
               >
-                <LinearGradient
-                  colors={['#e94560', '#c23652']}
-                  style={styles.buttonGradient}
-                >
-                  <Text style={styles.buttonText}>MANAGE SUBSCRIPTION</Text>
-                </LinearGradient>
+                <Text style={styles.subscriptionButtonText}>MANAGE SUBSCRIPTION</Text>
               </TouchableOpacity>
 
+              <TouchableOpacity
+                style={styles.signOutButton}
+                onPress={handleSignOut}
+              >
+                <Text style={styles.signOutButtonText}>SIGN OUT</Text>
+              </TouchableOpacity>
             </>
           )}
-
-          <View style={{ height: 50 }} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -443,6 +446,9 @@ const ProfileScreen: React.FC<Props> = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 120,
   },
   header: {
     flexDirection: 'row',
@@ -569,19 +575,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginTop: 30,
     marginBottom: 15,
-    borderRadius: 25,
-    overflow: 'hidden',
-    elevation: 5,
-    shadowColor: '#e94560',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  buttonGradient: {
-    paddingVertical: 22,
+    paddingVertical: 20,
     alignItems: 'center',
+    backgroundColor: '#e94560',
+    borderRadius: 25,
   },
-  buttonText: {
+  subscriptionButtonText: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',

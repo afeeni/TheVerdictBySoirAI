@@ -20,7 +20,7 @@ type HomeScreenNavigationProp = NativeStackNavigationProp<
 
 const HomeScreen = () => {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { user, signOut, checkSubscriptionLimit } = useAuthStore();
+  const { user, checkSubscriptionLimit } = useAuthStore();
 
   const handleCreateGame = async () => {
     const canHost = await checkSubscriptionLimit();
@@ -46,27 +46,6 @@ const HomeScreen = () => {
     navigation.navigate('Profile');
   };
 
-  const handleSubscription = () => {
-    navigation.navigate('Subscription');
-  };
-
-  const handleSignOut = async () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await signOut();
-          },
-        },
-      ]
-    );
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -88,18 +67,6 @@ const HomeScreen = () => {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.secondaryActions}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={handleProfile}>
-            <Text style={styles.secondaryButtonText}>Edit Profile</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.secondaryButton} onPress={handleSubscription}>
-            <Text style={styles.secondaryButtonText}>
-              {user?.subscriptionTier === 'premium' ? 'Manage Subscription' : 'Go Premium'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.stats}>
           <View style={styles.statItem}>
             <Text style={styles.statValue}>
@@ -116,8 +83,8 @@ const HomeScreen = () => {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-          <Text style={styles.signOutText}>Sign Out</Text>
+        <TouchableOpacity style={styles.editProfileButton} onPress={handleProfile}>
+          <Text style={styles.editProfileButtonText}>EDIT PROFILE</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -181,31 +148,11 @@ const styles = StyleSheet.create({
     color: '#FFD0D0',
     marginTop: 4,
   },
-  secondaryActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 32,
-  },
-  secondaryButton: {
-    backgroundColor: '#2A2A2A',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    flex: 0.48,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
   stats: {
     backgroundColor: '#2A2A2A',
     borderRadius: 12,
     padding: 20,
-    marginBottom: 32,
+    marginBottom: 24,
     borderWidth: 1,
     borderColor: '#333',
   },
@@ -228,14 +175,18 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontStyle: 'italic',
   },
-  signOutButton: {
+  editProfileButton: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    paddingVertical: 16,
     alignItems: 'center',
-    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#333',
   },
-  signOutText: {
-    fontSize: 14,
-    color: '#999',
-    textDecorationLine: 'underline',
+  editProfileButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
 

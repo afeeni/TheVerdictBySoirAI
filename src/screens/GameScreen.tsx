@@ -10,6 +10,7 @@ import {
   Animated,
   ActivityIndicator,
   ScrollView,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -18,11 +19,12 @@ import { useGameStore } from '../store/gameStore';
 import { useAuthStore } from '../store/authStore';
 import { supabase } from '../services/supabase';
 import LinearGradient from 'react-native-linear-gradient';
+import { useGameRealtime } from '../hooks/useGameRealtime';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Game'>;
 
 const GameScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { roomId, phase: initialPhase } = route.params;
+  const { roomId, phase: initialPhase } = route.params || {};
   const {
     currentRoom,
     currentSession,
@@ -34,10 +36,15 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
     nextQuestion,
     startTrial,
     endGame,
-    subscribeToGame,
-    unsubscribeFromGame,
+    updateTimer,
+    clearVotes,
+    setVotes,
+    setCurrentSession,
+    setCurrentQuestion,
+    setPlayers,
   } = useGameStore();
   const { user, profile } = useAuthStore();
+  const { subscribeToGame, unsubscribeFromGame } = useGameRealtime(roomId || null);
 
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<'guilty' | 'not_guilty' | null>(null);
@@ -46,32 +53,240 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
   const [phase, setPhase] = useState(initialPhase || 'voting');
   const [isLoading, setIsLoading] = useState(false);
   const [roundResults, setRoundResults] = useState<{ [key: string]: number }>({});
+  const [hasSubmittedVote, setHasSubmittedVote] = useState(false);
+  const [currentRoundRef, setCurrentRoundRef] = useState(1);
 
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
+  const mergeVotesById = (existing: any[], incoming: any[]) => {
+    const map = new Map<string, any>();
+    existing.forEach((vote) => {
+      if (vote?.id) {
+        map.set(vote.id, vote);
+      }
+    });
+    incoming.forEach((vote) => {
+      if (vote?.id) {
+        map.set(vote.id, vote);
+      }
+    });
+    return Array.from(map.values());
+  };
+
+  const countUniqueVoters = (roundVotes: any[]) => {
+    const unique = new Set(roundVotes.map((vote) => vote?.voter_id).filter(Boolean));
+    return unique.size;
+  };
+
+  const countUniquePlayers = (list: any[]) => {
+    const unique = new Set(list.map((player) => player?.user_id).filter(Boolean));
+    return unique.size;
+  };
+
+  // Clear votes only once when first entering game screen
   useEffect(() => {
-    // Subscribe to real-time updates
-    subscribeToGame(roomId);
+    console.log('GameScreen mounted, clearing votes');
+    clearVotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // Room subscription is already set up in gameStore from lobby
+    // This hook provides additional game-specific realtime features
+    let channel: any = null;
+
+    const setupSubscription = async () => {
+      if (roomId) {
+        channel = await subscribeToGame();
+      }
+    };
+
+    setupSubscription();
 
     return () => {
-      unsubscribeFromGame();
+      if (channel) {
+        unsubscribeFromGame(channel);
+      }
     };
-  }, [roomId]);
+  }, [roomId, subscribeToGame, unsubscribeFromGame]);
+
+  useEffect(() => {
+    if (!currentRoom?.id) return;
+    let isActive = true;
+
+    const refreshPlayers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('players')
+          .select('*, user:users(*)')
+          .eq('game_room_id', currentRoom.id);
+
+        if (error) throw error;
+        if (data && isActive) {
+          setPlayers(data as any);
+        }
+      } catch (error) {
+        console.error('Error refreshing players:', error);
+      }
+    };
+
+    refreshPlayers();
+    const timeoutId = setTimeout(refreshPlayers, 1500);
+
+    return () => {
+      isActive = false;
+      clearTimeout(timeoutId);
+    };
+  }, [currentRoom?.id, setPlayers]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const refreshSession = async () => {
+      if (!currentSession?.id) return;
+
+      try {
+        const { data: session, error } = await supabase
+          .from('game_sessions')
+          .select('*')
+          .eq('id', currentSession.id)
+          .single();
+
+        if (error) throw error;
+        if (!session || !isActive) return;
+
+        setCurrentSession(session);
+
+        if (session.current_question_id) {
+          const { data: question } = await supabase
+            .from('questions')
+            .select('*')
+            .eq('id', session.current_question_id)
+            .single();
+
+          if (question && isActive) {
+            setCurrentQuestion(question);
+          }
+        }
+      } catch (error) {
+        console.error('Error refreshing session:', error);
+      }
+    };
+
+    refreshSession();
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentSession?.id, setCurrentQuestion, setCurrentSession]);
+
+  useEffect(() => {
+    if (!hasSubmittedVote || !currentSession?.id) return;
+    let isActive = true;
+
+    const pollForAdvance = async () => {
+      try {
+        const { data: session, error } = await supabase
+          .from('game_sessions')
+          .select('*')
+          .eq('id', currentSession.id)
+          .single();
+
+        if (error) throw error;
+        if (!session || !isActive) return;
+
+        setCurrentSession(session);
+
+        const currentRound = session.current_round ?? 1;
+        const voteType = session.current_phase === 'voting' ? 'suspect' : 'verdict';
+        const { data: votesData } = await supabase
+          .from('votes')
+          .select('*')
+          .eq('game_session_id', session.id)
+          .eq('round_number', currentRound)
+          .eq('vote_type', voteType);
+
+        if (votesData && isActive) {
+          const mergedVotes = mergeVotesById(votes, votesData);
+          setVotes(mergedVotes);
+        }
+      } catch (error) {
+        console.error('Error polling for advance:', error);
+      }
+    };
+
+    pollForAdvance();
+    const intervalId = setInterval(pollForAdvance, 1500);
+
+    return () => {
+      isActive = false;
+      clearInterval(intervalId);
+    };
+  }, [currentSession?.id, hasSubmittedVote, setCurrentSession, setVotes, votes]);
+
+  // Navigate to Results when game ends
+  useEffect(() => {
+    const status = currentRoom?.status || (currentRoom as any)?.status;
+    if (status === 'finished' && roomId) {
+      navigation.replace('Results', { roomId });
+    }
+  }, [currentRoom?.status]);
 
   useEffect(() => {
     // Update phase from game session
-    if (currentSession?.current_phase) {
-      setPhase(currentSession.current_phase);
+    const sessionPhase = (currentSession as any)?.current_phase ?? currentSession?.currentPhase;
+    if (sessionPhase) {
+      setPhase(sessionPhase);
+    }
+
+    // Check if round changed - reset vote state
+    const newRound = (currentSession as any)?.current_round ?? currentSession?.currentRound ?? 1;
+    if (newRound !== currentRoundRef) {
+      console.log('Round changed from', currentRoundRef, 'to', newRound);
+      setCurrentRoundRef(newRound);
+      setHasSubmittedVote(false);
+      setSelectedPlayer(null);
+      setVerdict(null);
+    }
+
+    // Sync timer from session's timer_end_time
+    const timerEndTime = (currentSession as any)?.timer_end_time ?? currentSession?.timerEndTime;
+    if (timerEndTime) {
+      const endTime = new Date(timerEndTime).getTime();
+      const now = Date.now();
+      const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
+      // Always update timer, even if 0, to ensure proper countdown
+      updateTimer(remaining);
     }
   }, [currentSession]);
 
+  // Also reset when question changes
+  const [lastQuestionId, setLastQuestionId] = useState<string | null>(null);
+  useEffect(() => {
+    const questionId = currentQuestion?.id;
+    if (questionId && questionId !== lastQuestionId) {
+      console.log('Question changed, resetting vote state');
+      setLastQuestionId(questionId);
+      setHasSubmittedVote(false);
+      setSelectedPlayer(null);
+      setVerdict(null);
+    }
+  }, [currentQuestion]);
+
   useEffect(() => {
     // Handle timer countdown
+    if (timeRemaining <= 0) {
+      // Don't create interval if timer is already at 0
+      return;
+    }
+
     const timer = setInterval(() => {
-      if (timeRemaining && timeRemaining > 0) {
-        // Timer is handled in the store
-      } else if (timeRemaining === 0) {
+      if (timeRemaining > 1) {
+        updateTimer(timeRemaining - 1);
+      } else if (timeRemaining === 1) {
+        updateTimer(0);
+        // Call immediately when hitting 0
         handleTimerExpired();
       }
     }, 1000);
@@ -79,26 +294,155 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => clearInterval(timer);
   }, [timeRemaining]);
 
+  // Check if host and if all players have voted, then advance
+  const checkAndAdvance = async () => {
+    const hostId = (currentRoom as any)?.host_id || currentRoom?.hostId;
+    const isHost = hostId === user?.id;
+
+    if (!isHost) return; // Only host advances the game
+
+    const currentRound = (currentSession as any)?.current_round ?? currentSession?.currentRound ?? 1;
+    const currentPhase = (currentSession as any)?.current_phase ?? currentSession?.currentPhase ?? 'voting';
+    const sessionId = currentSession?.id;
+
+    // Don't advance if timer hasn't started yet (timeRemaining is 0 could mean not initialized)
+    if (!currentSession?.timerEndTime && timeRemaining === 0) {
+      console.log('Timer not initialized, skipping advance check');
+      return;
+    }
+
+    // Filter votes by round AND vote_type
+    const voteType = currentPhase === 'voting' ? 'suspect' : 'verdict';
+    let votesThisRound = votes.filter(v =>
+      v.round_number === currentRound && v.vote_type === voteType
+    );
+
+    // In trial phase, suspect can't vote on themselves, so expected voters = players - 1
+    const totalPlayers = countUniquePlayers(players);
+    const expectedVoters = currentPhase === 'trial' ? totalPlayers - 1 : totalPlayers;
+
+    console.log('Checking advance:', votesThisRound.length, 'votes,', expectedVoters, 'expected voters, phase:', currentPhase, 'round:', currentRound);
+
+    if (countUniqueVoters(votesThisRound) < expectedVoters && sessionId) {
+      try {
+        const { data, error } = await supabase
+          .from('votes')
+          .select('*')
+          .eq('game_session_id', sessionId)
+          .eq('round_number', currentRound)
+          .eq('vote_type', voteType);
+
+        if (error) throw error;
+        if (data) {
+          const mergedVotes = mergeVotesById(votes, data);
+          setVotes(mergedVotes);
+          votesThisRound = data;
+        }
+      } catch (error) {
+        console.error('Error fetching votes for advance check:', error);
+      }
+    }
+
+    if (countUniqueVoters(votesThisRound) >= expectedVoters) {
+      console.log('All players voted, advancing to next question');
+      try {
+        await nextQuestion();
+      } catch (error) {
+        console.error('Error advancing:', error);
+      }
+    }
+  };
+
   const handleTimerExpired = async () => {
-    if (phase === 'voting' && !selectedPlayer) {
+    const hostId = (currentRoom as any)?.host_id || currentRoom?.hostId;
+    const isHost = hostId === user?.id;
+    const currentRound = (currentSession as any)?.current_round ?? currentSession?.currentRound ?? 1;
+    const currentPhase = (currentSession as any)?.current_phase ?? currentSession?.currentPhase ?? phase;
+    const voteType = currentPhase === 'voting' ? 'suspect' : 'verdict';
+    const hasVotedFromStore = votes.some(
+      (v) => v.voter_id === user?.id && v.round_number === currentRound && v.vote_type === voteType
+    );
+
+    if (hasSubmittedVote || hasVotedFromStore) {
+      if (isHost) {
+        console.log('Timer expired, host advancing to next question');
+        try {
+          await nextQuestion();
+        } catch (error) {
+          console.error('Error advancing after timer:', error);
+        }
+      }
+      return;
+    }
+
+    if (currentPhase === 'voting' && !selectedPlayer) {
       // Auto-submit a random vote if no selection made
       const availablePlayers = players.filter(p => p.user_id !== user?.id);
       if (availablePlayers.length > 0) {
         const randomPlayer = availablePlayers[Math.floor(Math.random() * availablePlayers.length)];
-        await submitVote(randomPlayer.user_id, 'suspect');
+        await submitVote(randomPlayer.user_id);
       }
-    } else if (phase === 'trial' && !verdict) {
+    } else if (currentPhase === 'trial' && !verdict) {
       // Auto-submit "not guilty" if no verdict selected
-      await submitVote(null, 'verdict', 'not_guilty');
+      const suspectId = (currentSession as any)?.suspect_id ?? currentSession?.suspectId;
+      if (suspectId !== user?.id) {
+        await submitVote(null, 'not_guilty');
+      }
+    }
+
+    // Host advances the game when timer expires
+    if (isHost) {
+      console.log('Timer expired, host advancing to next question');
+      try {
+        await nextQuestion();
+      } catch (error) {
+        console.error('Error advancing after timer:', error);
+      }
     }
   };
+
+  useEffect(() => {
+    const hostId = (currentRoom as any)?.host_id || currentRoom?.hostId;
+    const isHost = hostId === user?.id;
+    if (!isHost) return;
+
+    checkAndAdvance();
+  }, [
+    votes,
+    players.length,
+    currentSession?.id,
+    currentSession?.currentRound,
+    currentSession?.currentPhase,
+  ]);
+
+  useEffect(() => {
+    const hostId = (currentRoom as any)?.host_id || currentRoom?.hostId;
+    const isHost = hostId === user?.id;
+    if (!isHost) return;
+
+    const handleAppStateChange = (nextState: string) => {
+      if (nextState !== 'active') return;
+      const timerEndTime = (currentSession as any)?.timer_end_time ?? currentSession?.timerEndTime;
+      if (!timerEndTime) return;
+      const endTime = new Date(timerEndTime).getTime();
+      if (Date.now() >= endTime) {
+        handleTimerExpired();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, [currentRoom, currentSession, user?.id]);
 
   const handleVoteSubmit = async () => {
     if (phase === 'voting' && selectedPlayer) {
       setIsLoading(true);
       try {
-        await submitVote(selectedPlayer, 'suspect');
+        await submitVote(selectedPlayer);
         setSelectedPlayer(null);
+        setHasSubmittedVote(true);
+        // Check if all players have voted
+        setTimeout(() => checkAndAdvance(), 500);
       } catch (error) {
         Alert.alert('Error', 'Failed to submit vote');
       } finally {
@@ -111,8 +455,11 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
     if (phase === 'trial' && verdict) {
       setIsLoading(true);
       try {
-        await submitVote(null, 'verdict', verdict);
+        await submitVote(null, verdict);
         setVerdict(null);
+        setHasSubmittedVote(true);
+        // Check if all players have voted
+        setTimeout(() => checkAndAdvance(), 500);
       } catch (error) {
         Alert.alert('Error', 'Failed to submit verdict');
       } finally {
@@ -122,8 +469,18 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const renderVotingPhase = () => {
-    const isHost = currentRoom?.host_id === user?.id;
-    const hasVoted = votes.some(v => v.voter_id === user?.id && v.round_number === currentSession?.current_round);
+    const isHost = (currentRoom as any)?.host_id === user?.id || currentRoom?.hostId === user?.id;
+    const currentRound = (currentSession as any)?.current_round ?? currentSession?.currentRound ?? 1;
+    const hasVotedFromStore = votes.some(
+      v => v.voter_id === user?.id && v.round_number === currentRound && v.vote_type === 'suspect'
+    );
+    const hasVoted = hasSubmittedVote || hasVotedFromStore;
+    const totalPlayers = countUniquePlayers(players);
+    const votesThisRound = votes.filter(v => v.round_number === currentRound && v.vote_type === 'suspect');
+    const uniqueVotesCount = countUniqueVoters(votesThisRound);
+
+    // Debug logging
+    console.log('Voting phase - round:', currentRound, 'votes:', votes.length, 'hasVoted:', hasVoted, 'hasSubmittedVote:', hasSubmittedVote);
 
     return (
       <View style={styles.container}>
@@ -135,7 +492,7 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.phaseLabel}>VOTING ROUND</Text>
-          <Text style={styles.roundText}>Round {currentSession?.current_round || 1}</Text>
+          <Text style={styles.roundText}>Round {currentRound}</Text>
         </View>
 
         {/* Timer */}
@@ -195,27 +552,26 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
             <TouchableOpacity
               style={[
                 styles.submitButton,
+                { backgroundColor: selectedPlayer ? '#e94560' : '#666' },
                 (!selectedPlayer || isLoading) && styles.submitButtonDisabled,
               ]}
               onPress={handleVoteSubmit}
               disabled={!selectedPlayer || isLoading}
             >
-              <LinearGradient
-                colors={selectedPlayer ? ['#e94560', '#c23652'] : ['#666', '#555']}
-                style={styles.submitButtonGradient}
-              >
+              <View style={styles.submitButtonGradient}>
                 <Text style={styles.submitButtonText}>
                   {isLoading ? 'Submitting...' : 'SUBMIT VOTE'}
                 </Text>
-              </LinearGradient>
+              </View>
             </TouchableOpacity>
           </>
         ) : (
           <View style={styles.waitingContainer}>
-            <ActivityIndicator size="large" color="#e94560" />
+            <Text style={styles.voteConfirmText}>✓ Vote Submitted!</Text>
+            <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 20 }} />
             <Text style={styles.waitingText}>Waiting for other players...</Text>
             <Text style={styles.waitingSubtext}>
-              {votes.filter(v => v.round_number === currentSession?.current_round).length} / {players.length} voted
+              {uniqueVotesCount} / {totalPlayers} voted
             </Text>
           </View>
         )}
@@ -224,12 +580,21 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const renderTrialPhase = () => {
-    const suspect = players.find(p => p.user_id === currentSession?.suspect_id);
-    const hasVoted = votes.some(
+    const suspectId = (currentSession as any)?.suspect_id ?? currentSession?.suspectId;
+    const suspect = players.find(p => p.user_id === suspectId);
+    const currentRound = (currentSession as any)?.current_round ?? currentSession?.currentRound ?? 1;
+    const hasVotedFromStore = votes.some(
       v => v.voter_id === user?.id &&
-      v.round_number === currentSession?.current_round &&
+      v.round_number === currentRound &&
       v.vote_type === 'verdict'
     );
+    const hasVoted = hasSubmittedVote || hasVotedFromStore;
+    const totalPlayers = countUniquePlayers(players);
+    const verdictVotesThisRound = votes.filter(v => v.round_number === currentRound && v.vote_type === 'verdict');
+    const uniqueVerdictVotesCount = countUniqueVoters(verdictVotesThisRound);
+
+    // Debug logging
+    console.log('Trial phase - round:', currentRound, 'votes:', votes.length, 'hasVoted:', hasVoted, 'hasSubmittedVote:', hasSubmittedVote);
 
     return (
       <View style={styles.container}>
@@ -241,7 +606,7 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.phaseLabel}>HOT SEAT TRIAL</Text>
-          <Text style={styles.roundText}>Question {currentSession?.current_round || 1}</Text>
+          <Text style={styles.roundText}>Question {currentRound}</Text>
         </View>
 
         {/* Timer */}
@@ -314,19 +679,17 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
             <TouchableOpacity
               style={[
                 styles.submitButton,
+                { backgroundColor: verdict ? '#e94560' : '#666' },
                 (!verdict || isLoading) && styles.submitButtonDisabled,
               ]}
               onPress={handleVerdictSubmit}
               disabled={!verdict || isLoading}
             >
-              <LinearGradient
-                colors={verdict ? ['#e94560', '#c23652'] : ['#666', '#555']}
-                style={styles.submitButtonGradient}
-              >
+              <View style={styles.submitButtonGradient}>
                 <Text style={styles.submitButtonText}>
                   {isLoading ? 'Submitting...' : 'SUBMIT VERDICT'}
                 </Text>
-              </LinearGradient>
+              </View>
             </TouchableOpacity>
           </View>
         ) : suspect?.user_id === user?.id ? (
@@ -336,8 +699,12 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
           </View>
         ) : (
           <View style={styles.waitingContainer}>
-            <ActivityIndicator size="large" color="#e94560" />
-            <Text style={styles.waitingText}>Waiting for verdicts...</Text>
+            <Text style={styles.voteConfirmText}>✓ Verdict Submitted!</Text>
+            <ActivityIndicator size="large" color="#e94560" style={{ marginTop: 20 }} />
+            <Text style={styles.waitingText}>Waiting for other verdicts...</Text>
+            <Text style={styles.waitingSubtext}>
+              {uniqueVerdictVotesCount} / {totalPlayers - 1} voted
+            </Text>
           </View>
         )}
 
@@ -361,8 +728,22 @@ const GameScreen: React.FC<Props> = ({ navigation, route }) => {
     );
   };
 
+  // Show loading if game data isn't ready
+  if (!currentRoom || !currentSession) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: '#1a1a2e' }]}>
+        <View style={styles.waitingContainer}>
+          <ActivityIndicator size="large" color="#e94560" />
+          <Text style={styles.waitingText}>Loading game...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const bgColor = phase === 'voting' ? '#1a1a2e' : '#2a0845';
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bgColor }]}>
       {phase === 'voting' ? renderVotingPhase() : renderTrialPhase()}
     </SafeAreaView>
   );
@@ -505,6 +886,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  voteConfirmText: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginBottom: 10,
   },
   waitingText: {
     fontSize: 18,

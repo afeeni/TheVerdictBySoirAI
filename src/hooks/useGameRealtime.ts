@@ -1,131 +1,20 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../services/supabase';
 import { useGameStore } from '../store/gameStore';
-import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 export const useGameRealtime = (roomId: string | null) => {
-  const {
-    setCurrentRoom,
-    setCurrentSession,
-    setPlayers,
-    addPlayer,
-    removePlayer,
-    updatePlayer,
-    setCurrentQuestion,
-    setTimeRemaining,
-    setVotes,
-    addVote,
-  } = useGameStore();
+  const { setPlayers, setTimeRemaining } = useGameStore();
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   const subscribeToGame = useCallback(async () => {
     if (!roomId) return null;
 
-    // Create a channel for this game room
-    const channel = supabase.channel(`game-${roomId}`);
+    // All postgres_changes are already handled by gameStore.subscribeToRoom
+    // This hook only handles broadcast events for real-time sync
+    const channel = supabase.channel(`game-broadcast-${roomId}`);
 
-    // Subscribe to game_rooms changes
     channel
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'game_rooms',
-          filter: `id=eq.${roomId}`,
-        },
-        async (payload: RealtimePostgresChangesPayload<any>) => {
-          if (payload.eventType === 'UPDATE') {
-            setCurrentRoom(payload.new);
-          }
-        }
-      )
-      // Subscribe to game_sessions changes
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'game_sessions',
-          filter: `game_room_id=eq.${roomId}`,
-        },
-        async (payload: RealtimePostgresChangesPayload<any>) => {
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-            const session = payload.new;
-            setCurrentSession(session);
-
-            // If there's a new question, fetch it
-            if (session.current_question_id) {
-              const { data: question } = await supabase
-                .from('questions')
-                .select('*')
-                .eq('id', session.current_question_id)
-                .single();
-
-              if (question) {
-                setCurrentQuestion(question);
-              }
-            }
-
-            // Update timer
-            if (session.timer_end_time) {
-              const endTime = new Date(session.timer_end_time).getTime();
-              const now = Date.now();
-              const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
-              setTimeRemaining(remaining);
-            }
-          }
-        }
-      )
-      // Subscribe to players changes
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'players',
-          filter: `game_room_id=eq.${roomId}`,
-        },
-        async (payload: RealtimePostgresChangesPayload<any>) => {
-          if (payload.eventType === 'INSERT') {
-            // Fetch user data for new player
-            const { data: user } = await supabase
-              .from('users')
-              .select('*')
-              .eq('id', payload.new.user_id)
-              .single();
-
-            if (user) {
-              addPlayer({ ...payload.new, user });
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            updatePlayer(payload.new.id, payload.new);
-          } else if (payload.eventType === 'DELETE') {
-            removePlayer(payload.old.id);
-          }
-        }
-      )
-      // Subscribe to votes changes
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'votes',
-        },
-        async (payload: RealtimePostgresChangesPayload<any>) => {
-          // Check if this vote belongs to our game session
-          const { data: session } = await supabase
-            .from('game_sessions')
-            .select('game_room_id')
-            .eq('id', payload.new.game_session_id)
-            .single();
-
-          if (session?.game_room_id === roomId) {
-            addVote(payload.new);
-          }
-        }
-      )
-      // Subscribe to broadcast events for real-time updates
       .on(
         'broadcast',
         { event: 'timer-update' },
@@ -136,7 +25,7 @@ export const useGameRealtime = (roomId: string | null) => {
       .on(
         'broadcast',
         { event: 'round-complete' },
-        async (payload) => {
+        async () => {
           // Fetch updated scores
           const { data: players } = await supabase
             .from('players')
@@ -152,53 +41,57 @@ export const useGameRealtime = (roomId: string | null) => {
         'broadcast',
         { event: 'game-end' },
         (payload) => {
-          // Navigate to results
           console.log('Game ended:', payload);
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Broadcast channel subscribed');
+        } else if (err) {
+          console.error('Broadcast channel error:', err);
+        }
+      });
 
+    channelRef.current = channel;
     return channel;
-  }, [roomId]);
+  }, [roomId, setPlayers, setTimeRemaining]);
 
   const unsubscribeFromGame = useCallback(async (channel: RealtimeChannel | null) => {
     if (channel) {
       await supabase.removeChannel(channel);
     }
+    channelRef.current = null;
   }, []);
 
   const broadcastTimerUpdate = useCallback((timeRemaining: number) => {
-    if (!roomId) return;
+    if (!channelRef.current) return;
 
-    const channel = supabase.channel(`game-${roomId}`);
-    channel.send({
+    channelRef.current.send({
       type: 'broadcast',
       event: 'timer-update',
       payload: { timeRemaining },
     });
-  }, [roomId]);
+  }, []);
 
   const broadcastRoundComplete = useCallback(() => {
-    if (!roomId) return;
+    if (!channelRef.current) return;
 
-    const channel = supabase.channel(`game-${roomId}`);
-    channel.send({
+    channelRef.current.send({
       type: 'broadcast',
       event: 'round-complete',
       payload: {},
     });
-  }, [roomId]);
+  }, []);
 
   const broadcastGameEnd = useCallback(() => {
-    if (!roomId) return;
+    if (!channelRef.current) return;
 
-    const channel = supabase.channel(`game-${roomId}`);
-    channel.send({
+    channelRef.current.send({
       type: 'broadcast',
       event: 'game-end',
       payload: {},
     });
-  }, [roomId]);
+  }, []);
 
   return {
     subscribeToGame,
